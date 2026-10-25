@@ -3,7 +3,7 @@ import json
 import math
 from pathlib import Path
 from layers import combine_frames
-from horror import SCENE
+from show_profiles import scene_for
 
 GAUGE = json.loads((Path(__file__).parent/'static'/'gauge.json').read_text())
 
@@ -59,7 +59,7 @@ def meter_frame(params):
     gauge = params.get('gauge', default_gauge())
     strength = params['brightness']*gauge['brightness']/100
     if not gauge['enabled'] or strength == 0: return []
-    pink = gauge.get('reactive',False) and gauge['value']>=SCENE['horror_at']
+    pink = gauge.get('reactive',False) and gauge['value']>=scene_for(params.get('show_version','v1'))['horror_at']
     colour = (255,105,180) if pink else (255,0,0)
     rgb = tuple(round(c/255*4095*strength/100) for c in colour)
     result = []

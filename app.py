@@ -13,6 +13,7 @@ from urllib.parse import parse_qs
 
 from laser import LaserBridge
 from osc_bridge import OSCBridge
+from show_profiles import SHOWS, catalog, preset_for
 
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
@@ -40,6 +41,8 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path == '/api/state':
             return self.reply(dict(BRIDGE.snapshot(), osc=OSC.snapshot(), token=TOKEN))
+        if path == '/api/shows':
+            return self.reply(catalog())
         if path == '/api/svg':
             value = parse_qs(self.path.partition('?')[2]).get('layer')
             if value is not None and value not in (['0'], ['1']):
@@ -104,6 +107,7 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     parser.add_argument('--device', default='192.168.1.1')
     parser.add_argument('--open', action='store_true')
+    parser.add_argument('--show', choices=tuple(SHOWS))
     args = parser.parse_args()
     url = 'http://localhost:%d' % args.port
 
@@ -120,6 +124,14 @@ def main():
         response = existing.getresponse()
         data = json.loads(response.read())
         if data.get('app') == 'lasercube-local':
+            if args.show and args.show!=data.get('params',{}).get('show_version'):
+                existing.request('POST','/api/version',json.dumps({'version':args.show}),
+                                 {'Content-Type':'application/json','X-Local-Token':data.get('token','')})
+                switched=existing.getresponse()
+                payload=json.loads(switched.read())
+                if switched.status!=200:
+                    print(payload.get('error','起動中のアプリを再起動してください'),flush=True)
+                    return
             print('すでに起動しています: ' + url, flush=True)
             if args.open:
                 open_page()
@@ -129,9 +141,10 @@ def main():
     finally:
         existing.close()
     BRIDGE = LaserBridge(args.device, svg_path=ROOT / '.runtime' / 'imported-svg.json', asset_dir=ROOT / 'assets')
-    preset = ROOT / 'assets' / 'show-preset.json'
-    if preset.exists():
-        BRIDGE.action('/api/params', json.loads(preset.read_text()))
+    BRIDGE.action('/api/params', preset_for('v1'))
+    if args.show and args.show!='v1':
+        BRIDGE.action('/api/version',{'version':args.show})
+        BRIDGE.action('/api/params',preset_for(args.show))
     OSC = OSCBridge(BRIDGE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     print('LaserCube Local: ' + url, flush=True)

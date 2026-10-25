@@ -7,6 +7,7 @@ import unittest
 from laser import LaserBridge
 from horror import horror_frame, scene_plan
 from meter import overlay_meter
+from show_profiles import preset_for
 
 ROOT=Path(__file__).resolve().parent
 
@@ -17,7 +18,7 @@ class BundleTests(unittest.TestCase):
             runtime=Path(directory)/'missing-runtime'
             bridge=LaserBridge('127.0.0.2',svg_path=runtime/'imported-svg.json',asset_dir=ROOT/'assets')
             try:
-                params=json.loads((ROOT/'assets'/'show-preset.json').read_text())
+                params=preset_for('v1')
                 state=bridge.action('/api/params',params)
                 self.assertEqual(state['mode'],'demo')
                 self.assertFalse(state['running']);self.assertFalse(state['armed'])

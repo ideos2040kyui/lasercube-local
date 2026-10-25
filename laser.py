@@ -15,6 +15,7 @@ import threading
 import time
 import json
 import hashlib
+import copy
 from pathlib import Path
 from patterns import hand_frame
 from svg_import import import_svg, svg_frame
@@ -22,6 +23,7 @@ from layers import compose_frame, default_layers, validate_layers
 from meter import default_gauge, overlay_meter, validate_gauge
 from horror import horror_frame, scene_plan
 from fan import prepare_fan_asset
+from show_profiles import validate_version
 
 
 def decode_info(data):
@@ -110,7 +112,8 @@ class LaserBridge:
         self.armed = False
         self.params = {'shape': 'circle', 'brightness': 1.0, 'scale': 12.0,
                        'speed': 0.15, 'colour': '#57e5dc', 'duration': 0.0, 'density': 4,
-                       'layers': default_layers(), 'gauge': default_gauge()}
+                       'layers': default_layers(), 'gauge': default_gauge(), 'show_version': 'v1'}
+        self.show_settings = {}
         self.info = None
         self.last_seen = 0.0
         self.heartbeat = 0.0
@@ -226,7 +229,7 @@ class LaserBridge:
                     'error': self.last_error, 'events': list(self.events),
                     'svg': self._svg_summary(self.svg),
                     'layer_svgs': [self._svg_summary(asset or self.svg) for asset in self.layer_svgs],
-                    'scene': scene_plan(self.params['gauge']['value']) if self.params['gauge'].get('reactive') else None,
+                    'scene': scene_plan(self.params['gauge']['value'],self.params['show_version']) if self.params['gauge'].get('reactive') else None,
                     'effects': {role:self._svg_summary(asset) for role,asset in self.effects.items()},
                     'fan_elapsed': max(0,self.clock()-self.fan_epoch),
                     'svg_elapsed': max(0, self.clock() - self.svg_epoch)}
@@ -285,8 +288,23 @@ class LaserBridge:
         with self.lock:
             if path == '/api/heartbeat':
                 self.heartbeat = self.clock()
+            elif path == '/api/version':
+                version=validate_version(data.get('version'))
+                if version!=self.params['show_version']:
+                    current=self.params['show_version']
+                    self.show_settings[current]=copy.deepcopy(self.params)
+                    updated=copy.deepcopy(self.show_settings.get(version,self.params))
+                    updated['show_version']=version
+                    self._stop('演出バージョンを切り替えるため停止')
+                    self.params=updated
+                    self.svg_epoch=self.fan_epoch=self.clock()
+                    self._event(version+'の演出へ切り替えました')
             elif path == '/api/params':
                 updated = dict(self.params)
+                if 'show_version' in data:
+                    version=validate_version(data['show_version'])
+                    if version!=self.params['show_version']:
+                        raise ValueError('v1 / v2の切り替えボタンを使ってください')
                 for key, limits in {'brightness': (0, 5), 'scale': (5, 30), 'speed': (0, 1)}.items():
                     if key in data:
                         value = float(data[key])

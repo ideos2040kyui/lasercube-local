@@ -21,7 +21,7 @@ var documentStub = {
   createTextNode: function(text){return text;}
 };
 var build = new Function('document','navigator','localStorage','fetch','requestAnimationFrame','setInterval','setTimeout','clearTimeout','window',
-  source + '\nreturn {onMidi, installHand, drawHands, drawSVG, drawLayers, drawGauge, gaugePaths, installGauge, installHorror, horrorPlan, drawHorror, changeLayer, updateControls, read:()=>({settings,bindings}), setSVG:(asset,session)=>{svgAsset=asset;state=session;layerAssets=[asset,asset];}, setEffects:assets=>{effectAssets=assets;state={...state,effects:{blood:assets.blood,fan:assets.fan},fan_elapsed:2};}, setMidi:value=>{midi=value;}};');
+  source + '\nreturn {onMidi, installHand, drawHands, drawSVG, drawLayers, drawGauge, gaugePaths, installGauge, installHorror, installShows, horrorPlan, drawHorror, changeLayer, updateControls, read:()=>({settings,bindings}), setSVG:(asset,session)=>{svgAsset=asset;state=session;layerAssets=[asset,asset];}, setEffects:assets=>{effectAssets=assets;state={...state,effects:{blood:assets.blood,fan:assets.fan},fan_elapsed:2};}, setMidi:value=>{midi=value;}};');
 var app = build(documentStub, {}, {
   getItem: function(key){return storage[key] || null;},
   setItem: function(key,value){storage[key]=value;}
@@ -122,4 +122,18 @@ assert(app.horrorPlan(95).heart_opacity===1&&Math.abs(app.horrorPlan(92.5).heart
 var fading={...gifFixture,frame_opacity:[.5]};before=drawing.strokeAlphas.length;
 app.drawSVG(800,600,1000,{...app.read().settings,brightness:5},fading,{revision:'gif-fixture'},0);
 assert(drawing.strokeAlphas[before]===.5,'GIF fading must change preview opacity');
-'MIDI, layers, meter, horror and GIF preview: '+assertions+' assertions passed';
+var profiles=['v1','v2'].map(id=>JSON.parse($.NSString.stringWithContentsOfFileEncodingError(projectRoot+'/shows/'+id+'.json',$.NSUTF8StringEncoding,null).js));
+app.installShows({shows:profiles});
+app.read().settings.show_version='v2';app.updateControls();
+assert(app.horrorPlan(90).stage==='hearts','v2 keeps hearts through 90 percent');
+assert(app.horrorPlan(75).hands>0&&app.horrorPlan(75).small_blood===0&&app.horrorPlan(75).large_blood===0,'v2 above 50 is hands only');
+assert(app.horrorPlan(50).hands===24&&app.horrorPlan(50).large_blood===0,'v2 exactly 50 is the last hands stage');
+assert(app.horrorPlan(49.999).hands===0&&app.horrorPlan(49.999).large_blood===1,'v2 below 50 must cleanly switch to central blood');
+assert(app.horrorPlan(0).fans===0&&app.horrorPlan(0).small_blood===0&&app.horrorPlan(0).hands===0,'v2 zero has no surrounding images or fans');
+app.read().settings.gauge.value=75;before=drawing.strokes;app.drawHorror(800,600,1000);
+assert(drawing.strokes===before+app.horrorPlan(75).hands*2,'v2 hands stage must not draw blood');
+app.read().settings.gauge.value=25;before=drawing.strokes;app.drawHorror(800,600,1000);
+assert(drawing.strokes===before+2,'v2 blood stage must draw only the central image');
+app.read().settings.show_version='v1';app.updateControls();
+assert(app.horrorPlan(75).small_blood>0&&app.horrorPlan(0).fans===3,'Switching back must restore original v1 rules');
+'MIDI, preview and show versions: '+assertions+' assertions passed';

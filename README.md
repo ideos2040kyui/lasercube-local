@@ -6,7 +6,7 @@ APC40のMIDI入力と、同じMac上の別アプリとのOSC送受信に対応�
 ## この最終演出をそのまま再現する
 
 Git clone後に起動するだけで、素材の変換や読み込みは不要です。
-`assets/`に血糊・扇子の元GIF、変換済み輪郭、起動時の演出設定を含めています。
+`assets/`に血糊・扇子の元GIFと変換済み輪郭、`shows/`に版ごとの演出設定を含めています。
 起動時はメーター100%・連動ONのデモ表示です。「蛇行線の長さ」を100→95→90→50→0へ下げると最終演出を確認できます。
 
 - 90%以上：外周のピンクのハートだけ。95%から90%で薄くなり、メーターもピンク。
@@ -15,7 +15,19 @@ Git clone後に起動するだけで、素材の変換や読み込みは不要�
 - 0%：外周に手形24体・小さい血糊8個。下に赤い扇子3つが横並びで出現。目と瞳を強調しています。
 
 起動だけで実機を発光させることはありません。実機にはLAN接続、画面での出力許可、開始操作が必要です。
-起動設定は`assets/show-preset.json`で確認・変更できます。APC40の割り当ては機器に合わせてMIDI学習してください。
+起動設定は`shows/v1.json`・`shows/v2.json`内の`preset`で確認・変更できます。APC40の割り当ては機器に合わせてMIDI学習してください。
+
+## v1 / v2を切り替える
+
+画面上部の「v1 · オリジナル」「v2 · 手形 → 血糊」で切り替えます。
+切り替え時は出力を停止して出力許可を解除します。各版の操作値はサーバー起動中、別々に記憶します。
+
+- v1：これまでの完成版。ハート、手形と血糊の重ね合わせ、0%の扇子3つを維持しています。
+- v2：90%以上はハート、90%未満〜50%以上は手形だけが増えます。50%未満で手形を消し、中央の血糊1つだけに切り替わります。周囲の小さい血糊と扇子は出しません。
+
+素材は共用し、演出の配置・条件・開始設定は`shows/v1.json`と`shows/v2.json`に分けています。
+通常はv1で起動します。v2で起動する場合は`python3 app.py --show v2 --open`を使えます。
+完成時点の元のv1ソースはGitタグ`v1`（`bd0cc41`）にも保存しています。
 
 ## 起動
 
@@ -241,7 +253,7 @@ python3 -c 'import socket; from osc_protocol import encode_message; socket.socke
 ## 検証
 
 ```sh
-python3 -m unittest -v test_laser.py test_osc.py test_svg.py test_layers.py test_horror.py test_gif.py test_bundle.py
+python3 -m unittest -v test_laser.py test_osc.py test_svg.py test_layers.py test_horror.py test_gif.py test_bundle.py test_versions.py
 osascript -l JavaScript test_midi.js
 ```
 

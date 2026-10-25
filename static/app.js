@@ -4,8 +4,8 @@ const labels = {density:'わらわら度',brightness:'明るさ',scale:'大き�
 for(let i=0;i<2;i++)for(const [key,label]of Object.entries({brightness:'明るさ',scale:'大きさ',speed:'速度',density:'手の数',x:'横位置',y:'縦位置',enabled:'表示切替'}))labels['layer'+i+'_'+key]='レイヤー'+['A','B'][i]+'：'+label;
 Object.assign(labels,{gauge_value:'どきどきメーター：線の長さ',gauge_brightness:'どきどきメーター：明るさ',gauge_enabled:'どきどきメーター：表示切替'});
 let state = null, token = '', learning = null, midi = null, selectedInput = '', timer = null;
-let settings = {gauge:{enabled:false,value:50,brightness:100,reactive:false},shape:'circle',brightness:1,scale:12,speed:0.15,colour:'#57e5dc',duration:0,density:4,layers:[{enabled:true,shape:'hands',brightness:100,scale:100,speed:.15,density:3,colour:'#ed1c24',x:0,y:0},{enabled:true,shape:'svg',brightness:100,scale:100,speed:1,density:3,colour:'#ed1c24',x:0,y:0}]};
-let handData=null,handOutline=[],gaugeData=null,horrorData=null;
+let settings = {show_version:'v1',gauge:{enabled:false,value:50,brightness:100,reactive:false},shape:'circle',brightness:1,scale:12,speed:0.15,colour:'#57e5dc',duration:0,density:4,layers:[{enabled:true,shape:'hands',brightness:100,scale:100,speed:.15,density:3,colour:'#ed1c24',x:0,y:0},{enabled:true,shape:'svg',brightness:100,scale:100,speed:1,density:3,colour:'#ed1c24',x:0,y:0}]};
+let handData=null,handOutline=[],gaugeData=null,horrorData=null,showProfiles={};
 let svgAsset=null, svgLoading='', svgSyncNow=0;
 let layerAssets=[null,null], layerLoading=['',''];
 let effectAssets={blood:null,fan:null},effectLoading='';
@@ -22,6 +22,9 @@ async function api(path, body={}) {
 }
 async function act(path, body={}) { try{return await api(path,body);}catch(e){notice(e.message);return null;} }
 function updateControls() {
+  const version=settings.show_version||'v1';if(showProfiles[version])horrorData=showProfiles[version].scene;
+  $('show-v1').classList.toggle('selected',version==='v1');$('show-v2').classList.toggle('selected',version==='v2');$('show-v1').disabled=version==='v1';$('show-v2').disabled=version==='v2';
+  $('show-description').textContent=showProfiles[version]?.description||(version==='v1'?'現在の完成版':'v2の調整版');
   for(const key of ['brightness','scale','speed','duration','colour','density']) $(key).value=settings[key];
   const gauge=settings.gauge||{enabled:false,value:50,brightness:100};$('gauge-enabled').checked=gauge.enabled;$('gauge-value').value=gauge.value;$('gauge-value-label').textContent=Math.round(gauge.value)+'%';$('gauge-brightness').value=gauge.brightness;$('gauge-brightness-label').textContent=Math.round(gauge.brightness)+'%';
   $('gauge-reactive').checked=!!gauge.reactive;
@@ -130,6 +133,8 @@ for(let i=0;i<2;i++){
     catch(error){notice(error.message);}finally{$('layer-'+i+'-load').disabled=false;input.value='';}
   };
 }
+async function selectShow(version){if(version===(settings.show_version||'v1'))return;clearTimeout(paramsTimer);const result=await act('/api/version',{version});if(result){settings={...result.params};updateControls();notice(version+'へ切り替えました。出力は停止しています。');}}
+$('show-v1').onclick=()=>selectShow('v1');$('show-v2').onclick=()=>selectShow('v2');
 $('gauge-reactive').onchange=()=>change({gauge:{...settings.gauge,reactive:$('gauge-reactive').checked,enabled:true}});
 $('gauge-enabled').onchange=()=>change({gauge:{...settings.gauge,enabled:$('gauge-enabled').checked}});
 for(const key of ['value','brightness'])$('gauge-'+key).addEventListener('input',()=>change({gauge:{...settings.gauge,[key]:Number($('gauge-'+key).value),enabled:true}}));
@@ -213,7 +218,8 @@ function installHand(data){
 }
 function installGauge(data){gaugeData=data;}
 function installHorror(data){horrorData=data;}
-fetch('/horror-scene.json').then(response=>{if(!response.ok)throw new Error('連動演出データを読み込めませんでした');return response.json();}).then(installHorror).catch(error=>notice(error.message));
+function installShows(data){showProfiles=Object.fromEntries(data.shows.map(show=>[show.id,show]));updateControls();}
+fetch('/api/shows').then(response=>{if(!response.ok)throw new Error('演出データを読み込めませんでした');return response.json();}).then(installShows).catch(error=>notice(error.message));
 fetch('/gauge.json').then(response=>{if(!response.ok)throw new Error('メーターデータを読み込めませんでした');return response.json();}).then(installGauge).catch(error=>notice(error.message));
 fetch('/hand.json').then(response=>{if(!response.ok)throw new Error('hand asset');return response.json();}).then(installHand).catch(()=>notice('手形データを読み込めませんでした。画面を再読み込みしてください。'));
 function drawHands(w,h,now,params=settings){
@@ -267,6 +273,7 @@ function drawLayers(w,h,now){
 function horrorPlan(value){
   const threshold=horrorData?.horror_at??90,centralBelow=horrorData?.central_below??50;
   if(value>=threshold){const progress=Math.min(1,Math.max(0,(value-threshold)/((horrorData?.heart_fade_from??95)-threshold))),floor=horrorData?.heart_min_opacity??.1;return {stage:'hearts',severity:0,hands:0,small_blood:0,large_blood:0,hearts:horrorData?.heart_centres.length??5,fans:0,heart_opacity:floor+(1-floor)*progress};}
+  if(horrorData?.mode==='separate'){if(value>=centralBelow){const severity=(threshold-value)/(threshold-centralBelow);return {stage:'hands',severity,central:0,hands:1+Math.floor((horrorData.max_hands-1)*severity**1.5),small_blood:0,large_blood:0,hearts:0,fans:0};}const depth=(centralBelow-value)/centralBelow;return {stage:'blood',severity:depth,central:depth,hands:0,small_blood:0,large_blood:1,hearts:0,fans:0};}
   const severity=(threshold-value)/threshold,central=Math.max(0,(centralBelow-value)/centralBelow);
   return {stage:value>=centralBelow?'horror':'critical',severity,central,hands:1+Math.floor(((horrorData?.max_hands??24)-1)*severity**1.5),small_blood:1+Math.floor(((horrorData?.blood_centres.length??8)-1)*severity),large_blood:value<centralBelow?1:0,hearts:0,fans:value<=0?(horrorData?.fan_centres?.length??3):0};
 }
