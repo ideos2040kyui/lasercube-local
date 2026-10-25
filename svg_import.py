@@ -318,7 +318,10 @@ def svg_frame(asset, params, elapsed=0.0, blank=False):
     # Keep screen coordinates here; the common UDP encoder converts scanner Y.
     transformed = [[(round(2048+(x*c-y*s)*scale), round(2048+(x*s+y*c)*scale)) for x,y in path] for path in paths]
     result = []; previous = transformed[-1][-1]
-    for path in transformed:
+    for path_index,path in enumerate(transformed):
+        if asset.get('frame_colours'):
+            colour=asset['frame_colours'][index][path_index].lstrip('#')
+            rgb=tuple(round(int(colour[i:i+2],16)/255*4095*params['brightness']/100*opacity) for i in (0,2,4)) if not blank else (0,0,0)
         first = path[0]
         result.extend((round(previous[0]+(first[0]-previous[0])*i/8), round(previous[1]+(first[1]-previous[1])*i/8), 0, 0, 0) for i in range(1, 9))
         result.extend([(*first, 0, 0, 0)]*4)

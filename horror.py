@@ -64,19 +64,24 @@ def heart_frame(params,elapsed):
     return result
 
 
-def horror_frame(params,elapsed,svg=None,blank=False,fan=None,fan_elapsed=None):
+def horror_frame(params,elapsed,svg=None,blank=False,fan=None,fan_elapsed=None,room=None):
     if blank or params['brightness']==0:return [(2048,2048,0,0,0)]*100
     version=params.get('show_version','v1');scene=scene_for(version)
     plan=scene_plan(params['gauge']['value'],version)
+    room_frames=[]
+    if scene.get('central_room') and room:
+        config=scene['central_room']
+        local=dict(params,scale=params['scale']*config['scale'],brightness=params['brightness']*config['brightness'])
+        room_frames=[svg_frame(room,local,elapsed)]
     if plan['hearts']:
-        return combine_frames([heart_frame(dict(params,brightness=params['brightness']*plan['heart_opacity']),elapsed)])
+        return combine_frames(room_frames+[heart_frame(dict(params,brightness=params['brightness']*plan['heart_opacity']),elapsed)])
     severity=plan['severity']
     hands=dict(params,shape='hands',colour='#ed1c24',density=plan['hands'],
                brightness=params['brightness']*(.35+.65*severity),
                _hand_centres=scene['hand_centres'],_hand_size=.29-.12*severity,
                _hand_visibility_floor=.35+.30*severity)
-    frames=[hand_frame(hands,elapsed*(.1+.65*severity))]
-    priorities=[1]
+    frames=room_frames+[hand_frame(hands,elapsed*(.1+.65*severity))]
+    priorities=[2]*len(room_frames)+[1]
     fan_visible=False
     if plan['fans'] and fan:
         amplitude=params['scale']/100*2047

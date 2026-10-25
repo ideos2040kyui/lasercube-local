@@ -21,7 +21,7 @@ var documentStub = {
   createTextNode: function(text){return text;}
 };
 var build = new Function('document','navigator','localStorage','fetch','requestAnimationFrame','setInterval','setTimeout','clearTimeout','window',
-  source + '\nreturn {onMidi, installHand, drawHands, drawSVG, drawLayers, drawGauge, gaugePaths, installGauge, installHorror, installShows, horrorPlan, drawHorror, changeLayer, updateControls, read:()=>({settings,bindings}), setSVG:(asset,session)=>{svgAsset=asset;state=session;layerAssets=[asset,asset];}, setEffects:assets=>{effectAssets=assets;state={...state,effects:{blood:assets.blood,fan:assets.fan},fan_elapsed:2};}, setMidi:value=>{midi=value;}};');
+  source + '\nreturn {onMidi, installHand, drawHands, drawSVG, drawLayers, drawGauge, gaugePaths, installGauge, installHorror, installShows, horrorPlan, drawHorror, changeLayer, updateControls, read:()=>({settings,bindings}), setSVG:(asset,session)=>{svgAsset=asset;state=session;layerAssets=[asset,asset];}, setEffects:assets=>{effectAssets=assets;state={...state,effects:{...assets},fan_elapsed:2};}, setMidi:value=>{midi=value;}};');
 var app = build(documentStub, {}, {
   getItem: function(key){return storage[key] || null;},
   setItem: function(key,value){storage[key]=value;}
@@ -136,4 +136,15 @@ app.read().settings.gauge.value=25;before=drawing.strokes;app.drawHorror(800,600
 assert(drawing.strokes===before+2,'v2 blood stage must draw only the central image');
 app.read().settings.show_version='v1';app.updateControls();
 assert(app.horrorPlan(75).small_blood>0&&app.horrorPlan(0).fans===3,'Switching back must restore original v1 rules');
+var roomFixture={...gifFixture,revision:'room-fixture',frames:[[gifFixture.frames[0][0],gifFixture.frames[0][0],gifFixture.frames[0][0]]],frame_colours:[['#d9dded','#ed1c24','#245bff']]};
+app.setEffects({blood:gifFixture,fan:fanWithEyes,room:roomFixture});
+app.read().settings.show_version='v2';app.updateControls();
+for(var level of [100,75,25,0]){
+ app.read().settings.gauge.value=level;before=drawing.strokes;drawing.strokeColours=[];app.drawHorror(800,600,1000);
+ var plan=app.horrorPlan(level),effectStrokes=plan.hearts?10:plan.hands*2+plan.large_blood*2;
+ assert(drawing.strokes===before+6+effectStrokes,'v2 must keep the central room through all meter stages');
+ assert(drawing.strokeColours.includes('#245bff')&&drawing.strokeColours.includes('#d9dded'),'Room colours must be preserved in the preview');
+}
+app.read().settings.show_version='v1';app.updateControls();app.read().settings.gauge.value=100;before=drawing.strokes;app.drawHorror(800,600,1000);
+assert(drawing.strokes===before+10,'v1 must ignore the room asset');
 'MIDI, preview and show versions: '+assertions+' assertions passed';

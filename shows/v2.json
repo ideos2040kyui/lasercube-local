@@ -1,7 +1,7 @@
 {
   "id": "v2",
   "label": "v2 · 手形→血糊",
-  "description": "90%未満で手形だけが増え、50%未満で手形を消して中央の血糊1つだけに切り替わります。",
+  "description": "中央のroom2.gifは常時表示。90%未満で外周の手形が増え、50%未満で手形を消して中央の血糊1つに切り替わります。",
   "scene": {
     "horror_at": 90,
     "central_below": 50,
@@ -441,7 +441,11 @@
     ],
     "heart_fade_from": 95,
     "heart_min_opacity": 0.1,
-    "mode": "separate"
+    "mode": "separate",
+    "central_room": {
+      "scale": 0.62,
+      "brightness": 0.65
+    }
   },
   "preset": {
     "shape": "layers",

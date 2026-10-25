@@ -26,6 +26,8 @@ class BundleTests(unittest.TestCase):
                 self.assertTrue(state['params']['gauge']['reactive'])
                 self.assertEqual(state['effects']['blood']['frame_count'],61)
                 self.assertEqual(state['effects']['fan']['frame_count'],150)
+                self.assertEqual(state['effects']['room']['frame_count'],60)
+                self.assertNotIn('frame_colours',state['effects']['room'])
                 self.assertTrue(bridge.effects['fan']['fan_eye_emphasis'])
                 self.assertFalse(runtime.exists())
                 for value in (100,95,90,89.99,50,49.99,0):

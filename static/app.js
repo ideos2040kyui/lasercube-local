@@ -8,7 +8,8 @@ let settings = {show_version:'v1',gauge:{enabled:false,value:50,brightness:100,r
 let handData=null,handOutline=[],gaugeData=null,horrorData=null,showProfiles={};
 let svgAsset=null, svgLoading='', svgSyncNow=0;
 let layerAssets=[null,null], layerLoading=['',''];
-let effectAssets={blood:null,fan:null},effectLoading='';
+const effectRoles=['blood','fan','room'];
+let effectAssets={blood:null,fan:null,room:null},effectLoading='';
 let oscEditing = false;
 const pendingMidiOSC = new Map();
 let bindings = {};
@@ -28,7 +29,7 @@ function updateControls() {
   for(const key of ['brightness','scale','speed','duration','colour','density']) $(key).value=settings[key];
   const gauge=settings.gauge||{enabled:false,value:50,brightness:100};$('gauge-enabled').checked=gauge.enabled;$('gauge-value').value=gauge.value;$('gauge-value-label').textContent=Math.round(gauge.value)+'%';$('gauge-brightness').value=gauge.brightness;$('gauge-brightness-label').textContent=Math.round(gauge.brightness)+'%';
   $('gauge-reactive').checked=!!gauge.reactive;
-  const plan=horrorPlan(gauge.value);$('horror-status').textContent=gauge.reactive?((plan.hearts?'ピンクのハートだけ：'+plan.hearts+'個':'手形 '+plan.hands+'体 ／ 周囲の血糊 '+plan.small_blood+'個 ／ 中央の血糊 '+plan.large_blood+'個')+(plan.fans?' ／ 中央下の扇子 '+plan.fans+'個（0%限定）':'')):'メーター連動OFF：手動レイヤーを表示';
+  const plan=horrorPlan(gauge.value);$('horror-status').textContent=gauge.reactive?((horrorData?.central_room?'中央の部屋は常時表示 ／ ':'')+(plan.hearts?'ピンクのハート：'+plan.hearts+'個':'手形 '+plan.hands+'体 ／ 周囲の血糊 '+plan.small_blood+'個 ／ 中央の血糊 '+plan.large_blood+'個')+(plan.fans?' ／ 中央下の扇子 '+plan.fans+'個（0%限定）':'')):'メーター連動OFF：手動レイヤーを表示';
   $('density-value').textContent=Math.round(settings.density)+'体';
   $('brightness-value').textContent=Number(settings.brightness).toFixed(1)+'%';
   $('scale-value').textContent=Math.round(settings.scale)+'%';
@@ -66,10 +67,10 @@ function render() {
       fetch('/api/svg?layer='+i,{cache:'no-store'}).then(response=>{if(!response.ok)throw new Error('レイヤーSVGの読み込みに失敗しました');return response.json();}).then(asset=>{if(asset?.revision===state?.layer_svgs?.[i]?.revision)layerAssets[i]=asset;}).catch(error=>notice(error.message)).finally(()=>{layerLoading[i]='';});
     }
   }
-  const effectKey=['blood','fan'].map(role=>state.effects?.[role]?.revision||'').join(':');
-  const loadedKey=['blood','fan'].map(role=>effectAssets[role]?.revision||'').join(':');
-  $('effect-file-info').textContent='血糊：'+(state.effects?.blood?.name||'レイヤーBのSVG')+' ／ 扇子：'+(state.effects?.fan?.name||'GIF未設定');
-  if(effectKey!==':'&&effectKey!==loadedKey&&effectLoading!==effectKey){effectLoading=effectKey;fetch('/api/effects',{cache:'no-store'}).then(response=>{if(!response.ok)throw new Error('GIF輪郭データを読み込めませんでした');return response.json();}).then(assets=>{effectAssets=assets;}).catch(error=>notice(error.message)).finally(()=>{effectLoading='';});}
+  const effectKey=effectRoles.map(role=>state.effects?.[role]?.revision||'').join(':');
+  const loadedKey=effectRoles.map(role=>effectAssets[role]?.revision||'').join(':');
+  $('effect-file-info').textContent='血糊：'+(state.effects?.blood?.name||'レイヤーBのSVG')+' ／ 扇子：'+(state.effects?.fan?.name||'GIF未設定')+' ／ 部屋（v2）：'+(state.effects?.room?.name||'GIF未設定');
+  if(effectRoles.some(role=>state.effects?.[role])&&effectKey!==loadedKey&&effectLoading!==effectKey){effectLoading=effectKey;fetch('/api/effects',{cache:'no-store'}).then(response=>{if(!response.ok)throw new Error('GIF輪郭データを読み込めませんでした');return response.json();}).then(assets=>{effectAssets=assets;}).catch(error=>notice(error.message)).finally(()=>{effectLoading='';});}
   const real=state.mode==='real', connected=state.connected, device=connected?state.device:null;
   $('connection-dot').classList.toggle('online',connected);
   $('connection-title').textContent=connected?'LaserCube 接続済み':'LaserCube 未接続';
@@ -239,9 +240,10 @@ function drawSVG(w,h,now,params=settings,asset=svgAsset,info=state?.svg,seconds=
   let index=0;
   if(asset.duration){const fraction=(elapsed/asset.duration)%1;asset.starts.forEach((start,i)=>{if(fraction>=start)index=i;});}
   const angle=asset.duration?0:elapsed*Math.PI*2,c=Math.cos(angle),s=Math.sin(angle),radius=Math.min(w,h)*.34*params.scale/20,dpr=Math.min(window.devicePixelRatio||1,2);
-  for(const path of asset.frames[index].slice(0,asset._contour_limit??asset.frames[index].length)){
+  for(const [pathIndex,path] of asset.frames[index].slice(0,asset._contour_limit??asset.frames[index].length).entries()){
     ctx.beginPath();path.forEach(([x,y],i)=>{const px=w/2+(x*c-y*s)*radius,py=h/2+(x*s+y*c)*radius;i?ctx.lineTo(px,py):ctx.moveTo(px,py);});
-    ctx.strokeStyle=params.colour;ctx.shadowColor=params.colour;ctx.globalAlpha=params.brightness/5*(asset.frame_opacity?.[index]??1);ctx.shadowBlur=12*dpr;ctx.lineWidth=2*dpr;ctx.stroke();ctx.shadowBlur=2*dpr;ctx.lineWidth=.7*dpr;ctx.stroke();
+    const colour=asset.frame_colours?.[index]?.[pathIndex]||params.colour;
+    ctx.strokeStyle=colour;ctx.shadowColor=colour;ctx.globalAlpha=params.brightness/5*(asset.frame_opacity?.[index]??1);ctx.shadowBlur=12*dpr;ctx.lineWidth=2*dpr;ctx.stroke();ctx.shadowBlur=2*dpr;ctx.lineWidth=.7*dpr;ctx.stroke();
   }
   ctx.globalAlpha=1;ctx.shadowBlur=0;
 }
@@ -281,6 +283,7 @@ function drawHorror(w,h,now){
   if(!horrorData)return;
   const elapsed=((state?.svg_elapsed||0)+Math.max(0,now-svgSyncNow)/1000)*settings.speed;
   const plan=horrorPlan(settings.gauge.value),radius=Math.min(w,h)*.34*settings.scale/20,dpr=Math.min(window.devicePixelRatio||1,2);
+  if(horrorData.central_room&&effectAssets.room){const config=horrorData.central_room;drawSVG(w,h,now,{...settings,scale:settings.scale*config.scale,brightness:settings.brightness*config.brightness},effectAssets.room,state?.effects?.room,elapsed);}
   if(plan.hearts){
     const cycle=elapsed*Math.PI*2;
     horrorData.heart_centres.forEach(([x,y],index)=>{

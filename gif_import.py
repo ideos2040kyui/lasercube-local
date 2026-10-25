@@ -103,7 +103,7 @@ def convert_decoded(directory,name):
 
 def import_gif(source,role):
     source=Path(source).resolve()
-    if role not in ('blood','fan'):raise ValueError('Unknown GIF role')
+    if role not in ('blood','fan','room'):raise ValueError('Unknown GIF role')
     if source.stat().st_size>12*1024*1024:raise ValueError('GIFは12MB以内にしてください')
     if source.read_bytes()[:6] not in (b'GIF87a',b'GIF89a'):raise ValueError('GIFファイルを選んでください')
     runtime=ROOT/'.runtime';runtime.mkdir(exist_ok=True)
@@ -112,14 +112,18 @@ def import_gif(source,role):
         subprocess.run(['/usr/bin/swiftc',str(swift),'-O','-o',str(binary)],check=True,capture_output=True,timeout=120)
     with tempfile.TemporaryDirectory(prefix='gif-',dir=runtime) as directory:
         subprocess.run([str(binary),str(source),directory],check=True,capture_output=True,timeout=60)
-        asset=convert_decoded(directory,source.name)
+        if role=='room':
+            from room_import import convert_room_decoded
+            asset=convert_room_decoded(directory,source.name)
+        else:asset=convert_decoded(directory,source.name)
     output=runtime/('effect-%s.json'%role)
     temporary=output.with_suffix('.tmp');temporary.write_text(json.dumps(asset,separators=(',',':')));temporary.replace(output)
     return asset
 
 
 if __name__=='__main__':
-    parser=argparse.ArgumentParser();parser.add_argument('blood');parser.add_argument('fan');args=parser.parse_args()
-    for role,path in (('blood',args.blood),('fan',args.fan)):
+    parser=argparse.ArgumentParser();parser.add_argument('blood');parser.add_argument('fan');parser.add_argument('--room');args=parser.parse_args()
+    for role,path in (('blood',args.blood),('fan',args.fan),('room',args.room)):
+        if not path:continue
         asset=import_gif(path,role)
         print('%s: %s / %d frames / %.2f seconds'%(role,asset['name'],len(asset['frames']),asset['duration']),flush=True)

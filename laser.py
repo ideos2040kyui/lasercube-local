@@ -128,7 +128,7 @@ class LaserBridge:
         self.svg_path = Path(svg_path) if svg_path else None
         self.svg_epoch = self.clock()
         self.fan_epoch = self.clock()
-        self.effects = {'blood': None, 'fan': None}
+        self.effects = {'blood': None, 'fan': None, 'room': None}
         self.asset_dir = Path(asset_dir) if asset_dir else None
         for role in self.effects:
             candidates=[]
@@ -173,7 +173,8 @@ class LaserBridge:
         if reactive:
             samples = horror_frame(self.params, elapsed*self.params['speed'],
                                    self.effects['blood'] or self.layer_svgs[1] or self.svg, blank,
-                                   self.effects['fan'], (self.clock()-self.fan_epoch)*self.params['speed'])
+                                   self.effects['fan'], (self.clock()-self.fan_epoch)*self.params['speed'],
+                                   room=self.effects['room'])
         else:
             samples = make_frame(self.params, elapsed * self.params['speed'], blank, self.svg, self.layer_svgs)
         samples = overlay_meter(samples, self.params) if not blank else samples
@@ -236,7 +237,7 @@ class LaserBridge:
 
     @staticmethod
     def _svg_summary(asset):
-        return (dict({key: value for key, value in asset.items() if key not in ('frames', 'starts','frame_opacity')},
+        return (dict({key: value for key, value in asset.items() if key not in ('frames', 'starts','frame_opacity','frame_colours')},
                      frame_count=len(asset['frames'])) if asset else None)
 
     @staticmethod
