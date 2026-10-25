@@ -79,9 +79,9 @@ class OSCBridge:
             if args and not args[0]:
                 return
             if address == '/laser/next':
-                shapes = ['circle', 'eight', 'triangle', 'hands']
+                shapes = ['circle', 'eight', 'triangle', 'hands', 'layers'] + (['svg'] if self.laser.snapshot().get('svg') else [])
                 current = self.laser.snapshot()['params']['shape']
-                self.laser.action('/api/params', {'shape': shapes[(shapes.index(current) + 1) % 3]})
+                self.laser.action('/api/params', {'shape': shapes[(shapes.index(current) + 1) % len(shapes)]})
             else:
                 self.laser.action('/api/start' if address.endswith('/start') else '/api/stop', {})
             return

@@ -7,6 +7,7 @@ import time
 import unittest
 
 from laser import LaserBridge, decode_info, make_frame
+from svg_import import import_svg
 
 # Captured protocol fixture with the hardware MAC replaced by a local dummy address.
 CAPTURED = bytes.fromhex('7700000010070000ff0fb8880000b8880000031f127017ff4300020000000001c0a80101020357696669204c617365724375626520322e35572050726f000000')
@@ -108,12 +109,57 @@ class BridgeTests(unittest.TestCase):
         time.sleep(.04)
         self.assertTrue(all(packet == b'\x77' for packet in self.cube.packets))
 
+    def test_all_shapes_send_upright_coordinates_over_udp(self):
+        with self.bridge.lock:
+            self.bridge.svg = import_svg('<svg><path d="M0 0L100 0L25 100Z"/></svg>')
+        for shape in ('circle', 'eight', 'triangle', 'hands', 'svg'):
+            with self.subTest(shape=shape):
+                with self.bridge.lock:
+                    self.bridge.params.update(shape=shape, speed=0)
+                    screen = make_frame(self.bridge.params, 0, svg=self.bridge.svg)
+                    packet_start = len(self.cube.packets)
+                    count = self.bridge._send_frame()
+                packets_needed = math.ceil(count / 100)
+                self.assertTrue(until(lambda: sum(p.startswith(b'\xa9') for p in self.cube.packets[packet_start:]) >= packets_needed))
+                packets = [p for p in self.cube.packets[packet_start:] if p.startswith(b'\xa9')]
+                actual = [point for packet in packets for point in struct.iter_unpack('<5H', packet[4:])]
+                self.assertEqual(len(actual), len(screen))
+                self.assertEqual([p[0] for p in actual], [p[0] for p in screen])
+                self.assertEqual([p[2:] for p in actual], [p[2:] for p in screen])
+                for before, after in zip(screen, actual):
+                    self.assertEqual(before[1] + after[1], 4095)
+                self.assertTrue(any(p[1] < 2048 and q[1] > 2047 for p, q in zip(screen, actual)))
+
     def test_real_output_requires_explicit_arm(self):
         self.bridge.action('/api/mode', {'mode': 'real'})
         with self.assertRaises(RuntimeError):
             self.bridge.action('/api/start', {})
         with self.assertRaises(ValueError):
             self.bridge.action('/api/arm', {'acknowledge': False})
+
+    def test_meter_initial_blank_frame_stays_dark(self):
+        with self.bridge.lock:
+            self.bridge.params['gauge'].update(enabled=True, value=100)
+            start = len(self.cube.packets)
+            count = self.bridge._send_frame(blank=True)
+        self.assertTrue(until(lambda: sum(p.startswith(b'\xa9') for p in self.cube.packets[start:]) >= math.ceil(count/100)))
+        points = [point for packet in self.cube.packets[start:] if packet.startswith(b'\xa9')
+                  for point in struct.iter_unpack('<5H', packet[4:])]
+        self.assertTrue(all(point[2:] == (0, 0, 0) for point in points))
+
+    def test_meter_udp_output_uses_upright_upper_right_coordinates(self):
+        with self.bridge.lock:
+            self.bridge.params.update(colour='#00ffff', speed=0)
+            self.bridge.params['gauge'].update(enabled=True, value=65)
+            start = len(self.cube.packets)
+            count = self.bridge._send_frame()
+        self.assertTrue(until(lambda: sum(p.startswith(b'\xa9') for p in self.cube.packets[start:]) >= math.ceil(count/100)))
+        points = [point for packet in self.cube.packets[start:] if packet.startswith(b'\xa9')
+                  for point in struct.iter_unpack('<5H', packet[4:])]
+        red = [point for point in points if point[2] and not point[3] and not point[4]]
+        self.assertTrue(red)
+        self.assertTrue(all(x > 2048 and y > 2047 for x, y, *_ in red))
+        self.assertLessEqual(len(points), 1200)
 
     def test_temperature_warning_is_visible_but_does_not_prevent_arm(self):
         self.bridge.action('/api/mode', {'mode': 'real'})

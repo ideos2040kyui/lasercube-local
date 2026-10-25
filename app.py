@@ -9,6 +9,7 @@ import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from laser import LaserBridge
 from osc_bridge import OSCBridge
@@ -39,12 +40,21 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         if path == '/api/state':
             return self.reply(dict(BRIDGE.snapshot(), osc=OSC.snapshot(), token=TOKEN))
+        if path == '/api/svg':
+            value = parse_qs(self.path.partition('?')[2]).get('layer')
+            if value is not None and value not in (['0'], ['1']):
+                return self.reply({'error': 'Invalid layer'}, 400)
+            return self.reply(BRIDGE.svg_asset(int(value[0]) if value else None))
+        if path == '/api/effects':
+            return self.reply(BRIDGE.effect_assets())
         files = {'/': ('index.html', 'text/html; charset=utf-8'),
                  '/app.js': ('app.js', 'application/javascript; charset=utf-8'),
                  '/style.css': ('style.css', 'text/css; charset=utf-8'),
                  '/osc.css': ('osc.css', 'text/css; charset=utf-8'),
                  '/horror.css': ('horror.css', 'text/css; charset=utf-8'),
                  '/hand.json': ('hand.json', 'application/json; charset=utf-8')}
+        files['/gauge.json'] = ('gauge.json', 'application/json; charset=utf-8')
+        files['/horror-scene.json'] = ('horror-scene.json', 'application/json; charset=utf-8')
         if path not in files:
             return self.reply({'error': 'Not found'}, 404)
         name, mime = files[path]
@@ -63,12 +73,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply({'error': 'ローカル画面から操作してください'}, 403)
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if size < 0 or size > 8192:
+            limit = 3 * 1024 * 1024 if self.path == '/api/svg' else 8192
+            if size < 0 or size > limit:
                 raise ValueError('Request too large')
             body = json.loads(self.rfile.read(size) or b'{}')
             if not isinstance(body, dict):
                 raise ValueError('Invalid request')
-            if self.path == '/api/osc/config':
+            if self.path == '/api/svg':
+                result = BRIDGE.install_svg(body)
+            elif self.path == '/api/osc/config':
                 OSC.configure(body)
                 result = BRIDGE.snapshot()
             elif self.path == '/api/osc/midi':
@@ -115,7 +128,10 @@ def main():
         pass
     finally:
         existing.close()
-    BRIDGE = LaserBridge(args.device)
+    BRIDGE = LaserBridge(args.device, svg_path=ROOT / '.runtime' / 'imported-svg.json', asset_dir=ROOT / 'assets')
+    preset = ROOT / 'assets' / 'show-preset.json'
+    if preset.exists():
+        BRIDGE.action('/api/params', json.loads(preset.read_text()))
     OSC = OSCBridge(BRIDGE)
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     print('LaserCube Local: ' + url, flush=True)

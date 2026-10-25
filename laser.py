@@ -13,7 +13,15 @@ import socket
 import struct
 import threading
 import time
+import json
+import hashlib
+from pathlib import Path
 from patterns import hand_frame
+from svg_import import import_svg, svg_frame
+from layers import compose_frame, default_layers, validate_layers
+from meter import default_gauge, overlay_meter, validate_gauge
+from horror import horror_frame, scene_plan
+from fan import prepare_fan_asset
 
 
 def decode_info(data):
@@ -38,10 +46,16 @@ def decode_info(data):
     }
 
 
-def make_frame(params, phase=0.0, blank=False):
+def make_frame(params, phase=0.0, blank=False, svg=None, layer_svgs=None):
     """284 moving samples bracketed by blank samples; never a static point."""
+    if params['shape'] == 'layers':
+        return compose_frame(params, phase, make_frame, svg, layer_svgs, blank)
     if params['shape'] == 'hands':
         return hand_frame(params, phase, blank)
+    if params['shape'] == 'svg':
+        if svg is None:
+            raise ValueError('先にSVGを読み込んでください')
+        return svg_frame(svg, params, phase, blank)
     count = 284
     angle = phase * math.tau
     cosine, sine = math.cos(angle), math.sin(angle)
@@ -71,8 +85,14 @@ def make_frame(params, phase=0.0, blank=False):
     return [(first[0], first[1], 0, 0, 0)] * 8 + points + [(last[0], last[1], 0, 0, 0)] * 8
 
 
+def encode_samples(samples):
+    """Convert screen Y (down) to scanner Y (up) once, for every shape."""
+    return b''.join(struct.pack('<5H', x, 4095 - y, red, green, blue)
+                    for x, y, red, green, blue in samples)
+
+
 class LaserBridge:
-    def __init__(self, host='192.168.1.1', command_port=45457, data_port=45458, clock=None):
+    def __init__(self, host='192.168.1.1', command_port=45457, data_port=45458, clock=None, svg_path=None, asset_dir=None):
         address = ipaddress.ip_address(host)
         if address.version != 4 or not address.is_private:
             raise ValueError('LaserCubeにはプライベートIPv4アドレスを指定してください')
@@ -89,7 +109,8 @@ class LaserBridge:
         self.running = False
         self.armed = False
         self.params = {'shape': 'circle', 'brightness': 1.0, 'scale': 12.0,
-                       'speed': 0.15, 'colour': '#57e5dc', 'duration': 0.0, 'density': 4}
+                       'speed': 0.15, 'colour': '#57e5dc', 'duration': 0.0, 'density': 4,
+                       'layers': default_layers(), 'gauge': default_gauge()}
         self.info = None
         self.last_seen = 0.0
         self.heartbeat = 0.0
@@ -99,6 +120,40 @@ class LaserBridge:
         self.frame_number = 0
         self.rate = 12000
         self.events = collections.deque(maxlen=20)
+        self.svg = None
+        self.layer_svgs = [None, None]
+        self.svg_path = Path(svg_path) if svg_path else None
+        self.svg_epoch = self.clock()
+        self.fan_epoch = self.clock()
+        self.effects = {'blood': None, 'fan': None}
+        self.asset_dir = Path(asset_dir) if asset_dir else None
+        for role in self.effects:
+            candidates=[]
+            if self.svg_path:candidates.append(self.svg_path.with_name('effect-%s.json'%role))
+            if self.asset_dir:candidates.append(self.asset_dir/('effect-%s.json'%role))
+            for path in candidates:
+                if path.exists():
+                    try:
+                        asset = json.loads(path.read_text())
+                        if asset.get('kind') != 'gif' or not asset.get('frames'):
+                            raise ValueError('GIF輪郭データが正しくありません')
+                        self.effects[role] = prepare_fan_asset(asset) if role=='fan' else asset
+                        break
+                    except (ValueError, OSError, TypeError) as exc:
+                        self._event('GIFを読み込めません: ' + str(exc))
+        if self.svg_path and self.svg_path.exists():
+            try:
+                self.svg = self._compile_svg(json.loads(self.svg_path.read_text()))
+            except (ValueError, OSError, TypeError) as exc:
+                self._event('保存したSVGを読み込めません: ' + str(exc))
+        if self.svg_path:
+            for index, letter in enumerate(('a', 'b')):
+                path = self.svg_path.with_name('layer-%s-svg.json' % letter)
+                if path.exists():
+                    try:
+                        self.layer_svgs[index] = self._compile_svg(json.loads(path.read_text()))
+                    except (ValueError, OSError, TypeError) as exc:
+                        self._event('レイヤーSVGを読み込めません: ' + str(exc))
         self._event('デモモードで起動。機器なしでも操作できます。')
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -110,11 +165,19 @@ class LaserBridge:
         self.sock.sendto(packet, (self.host, self.command_port))
 
     def _send_frame(self, blank=False):
-        samples = make_frame(self.params, self.clock() * self.params['speed'], blank)
+        reactive = self.params['gauge'].get('reactive', False)
+        elapsed = self.clock() - self.svg_epoch if reactive or self.params['shape'] in ('svg', 'layers') else self.clock()
+        if reactive:
+            samples = horror_frame(self.params, elapsed*self.params['speed'],
+                                   self.effects['blood'] or self.layer_svgs[1] or self.svg, blank,
+                                   self.effects['fan'], (self.clock()-self.fan_epoch)*self.params['speed'])
+        else:
+            samples = make_frame(self.params, elapsed * self.params['speed'], blank, self.svg, self.layer_svgs)
+        samples = overlay_meter(samples, self.params) if not blank else samples
         for offset in range(0, len(samples), 100):
             group = samples[offset:offset + 100]
             header = bytes((0xA9, 0, self.sequence & 255, self.frame_number & 255))
-            payload = b''.join(struct.pack('<5H', *point) for point in group)
+            payload = encode_samples(group)
             self.sock.sendto(header + payload, (self.host, self.data_port))
             self.sequence += 1
         self.frame_number += 1
@@ -158,9 +221,65 @@ class LaserBridge:
         with self.lock:
             return {'app': 'lasercube-local', 'host': self.host, 'mode': self.mode, 'running': self.running,
                     'armed': self.armed, 'connected': bool(self.info and self.clock() - self.last_seen < 4),
-                    'device': self.info, 'params': dict(self.params),
+                    'device': self.info, 'params': dict(self.params, layers=[dict(layer) for layer in self.params['layers']], gauge=dict(self.params['gauge'])),
                     'remaining': (None if self.deadline is None else max(0, round(self.deadline - self.clock(), 1))) if self.running else 0,
-                    'error': self.last_error, 'events': list(self.events)}
+                    'error': self.last_error, 'events': list(self.events),
+                    'svg': self._svg_summary(self.svg),
+                    'layer_svgs': [self._svg_summary(asset or self.svg) for asset in self.layer_svgs],
+                    'scene': scene_plan(self.params['gauge']['value']) if self.params['gauge'].get('reactive') else None,
+                    'effects': {role:self._svg_summary(asset) for role,asset in self.effects.items()},
+                    'fan_elapsed': max(0,self.clock()-self.fan_epoch),
+                    'svg_elapsed': max(0, self.clock() - self.svg_epoch)}
+
+    @staticmethod
+    def _svg_summary(asset):
+        return (dict({key: value for key, value in asset.items() if key not in ('frames', 'starts','frame_opacity')},
+                     frame_count=len(asset['frames'])) if asset else None)
+
+    @staticmethod
+    def _compile_svg(data):
+        if not isinstance(data, dict) or not isinstance(data.get('name', ''), str):
+            raise ValueError('SVGファイル名が正しくありません')
+        asset = import_svg(data.get('source'), data.get('name', 'drawing.svg'), data.get('ignore_pale', True))
+        asset['revision'] = hashlib.sha256(json.dumps(asset, sort_keys=True).encode()).hexdigest()[:16]
+        return asset
+
+    def install_svg(self, data):
+        if not isinstance(data, dict):
+            raise ValueError('SVG設定が正しくありません')
+        index = data.get('layer')
+        if index is not None and (isinstance(index, bool) or not isinstance(index, int) or index not in (0, 1)):
+            raise ValueError('レイヤーは0（A）または1（B）を指定してください')
+        asset = self._compile_svg(data)
+        with self.lock:
+            if self.svg_path:
+                self.svg_path.parent.mkdir(parents=True, exist_ok=True)
+                destination = self.svg_path if index is None else self.svg_path.with_name('layer-%s-svg.json' % ('a', 'b')[index])
+                temporary = destination.with_suffix('.tmp')
+                temporary.write_text(json.dumps({key: data[key] for key in ('source', 'name', 'ignore_pale') if key in data}))
+                temporary.replace(destination)
+            if self.running:
+                self._stop('SVGを読み込むため停止')
+            self.armed = False
+            if index is None:
+                self.svg = asset
+                self.params.update(shape='svg', speed=1.0 if asset['duration'] else 0.0)
+            else:
+                self.layer_svgs[index] = asset
+                updated = [dict(layer) for layer in self.params['layers']]
+                updated[index].update(shape='svg', enabled=True, speed=1.0 if asset['duration'] else 0.0)
+                self.params.update(shape='layers', speed=1.0, layers=updated)
+            self.svg_epoch = self.clock()
+            self._event('SVG読込: %s（%dコマ）' % (asset['name'], len(asset['frames'])))
+            return self.snapshot()
+
+    def svg_asset(self, layer=None):
+        with self.lock:
+            return (self.layer_svgs[layer] or self.svg) if layer is not None else self.svg
+
+    def effect_assets(self):
+        with self.lock:
+            return self.effects
 
     def action(self, path, data):
         with self.lock:
@@ -185,8 +304,10 @@ class LaserBridge:
                         raise ValueError('わらわら度は1〜8の整数を指定してください')
                     updated['density'] = int(value)
                 if 'shape' in data:
-                    if data['shape'] not in ('circle', 'eight', 'triangle', 'hands'):
+                    if data['shape'] not in ('circle', 'eight', 'triangle', 'hands', 'svg', 'layers'):
                         raise ValueError('未対応の図形です')
+                    if data['shape'] == 'svg' and not self.svg:
+                        raise ValueError('先にSVGを読み込んでください')
                     updated['shape'] = data['shape']
                     if data['shape'] == 'hands' and 'colour' not in data:
                         updated['colour'] = '#ed1c24'
@@ -194,6 +315,14 @@ class LaserBridge:
                     if not isinstance(data['colour'], str) or not re.fullmatch(r'#[0-9a-fA-F]{6}', data['colour']):
                         raise ValueError('色が正しくありません')
                     updated['colour'] = data['colour']
+                if 'layers' in data:
+                    updated['layers'] = validate_layers(data['layers'], self.params['layers'])
+                if 'gauge' in data:
+                    updated['gauge'] = validate_gauge(data['gauge'], self.params['gauge'])
+                was_empty = self.params['gauge'].get('reactive') and self.params['gauge']['value'] <= 0
+                now_empty = updated['gauge'].get('reactive') and updated['gauge']['value'] <= 0
+                if now_empty and not was_empty:
+                    self.fan_epoch = self.clock()
                 if 'duration' in data and self.running and updated['duration'] != self.params['duration']:
                     self.deadline = None if updated['duration'] == 0 else self.clock() + updated['duration']
                 self.params = updated
@@ -216,6 +345,8 @@ class LaserBridge:
                     raise RuntimeError('通信処理が停止しています。アプリを再起動してください')
                 if self.running:
                     raise RuntimeError('すでに実行中です。停止してから開始してください。')
+                self.svg_epoch = self.clock()
+                self.fan_epoch = self.svg_epoch
                 if self.mode == 'real':
                     self._check_real()
                     if not self.armed or self.clock() - self.heartbeat > 3:

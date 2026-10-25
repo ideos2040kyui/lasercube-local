@@ -6,3 +6,12 @@ __pycache__/
 .env.*
 .venv/
 references/LaserDockNetworkDevice.cpp
+
+# Local drafts and working exports; final material lives in assets/.
+/exports/
+/references/
+/blood1.svg
+/blood1_fadeout.svg
+/blood2.svg
+/blood4.gif
+/openEyes.gif

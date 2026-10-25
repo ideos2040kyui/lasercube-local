@@ -47,15 +47,16 @@ def hand_frame(params, phase, blank=False):
     amplitude = params['scale'] / 100 * 2047
     result = []
     for index in range(count):
-        base_x, base_y = HAND['centres'][index]
+        base_x, base_y = params.get('_hand_centres', HAND['centres'])[index]
         cycle = phase * math.tau
         centre_x = base_x + .045 * math.sin(cycle * .73 + index * 1.7)
         centre_y = base_y + .045 * math.cos(cycle * .57 + index * 2.1)
         angle = -.20 + .20 * math.sin(cycle * .43 + index * 1.3)
-        size = .27 + .025 * math.sin(cycle * .61 + index * .9)
+        size = params.get('_hand_size', .27) + .025 * math.sin(cycle * .61 + index * .9)
         cosine, sine = math.cos(angle), math.sin(angle)
         mirror = -1 if index % 2 else 1
-        visibility = .15 + .85 * ((1 + math.sin(cycle * .23 + index * 1.9)) / 2) ** 1.6
+        floor = params.get('_hand_visibility_floor', .15)
+        visibility = floor + (1-floor) * ((1 + math.sin(cycle * .23 + index * 1.9)) / 2) ** 1.6
         hand_rgb = tuple(round(value * visibility) for value in rgb)
         points = []
         for x, y in OUTLINE:
